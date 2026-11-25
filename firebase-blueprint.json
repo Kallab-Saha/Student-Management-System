@@ -1,0 +1,316 @@
+{
+  "entities": {
+    "AdminUser": {
+      "title": "AdminUser",
+      "description": "Authorized portal administrator identity.",
+      "type": "object",
+      "properties": {
+        "email": { "type": "string", "format": "email", "maxLength": 160 },
+        "name": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "role": { "type": "string", "enum": ["admin"] },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["email", "name", "role", "createdAt"]
+    },
+    "UserLink": {
+      "title": "UserLink",
+      "description": "Maps a verified Firebase Auth UID to an institutional member role and ID.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "minLength": 6, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "role": { "type": "string", "enum": ["admin", "teacher", "student"] },
+        "memberId": { "type": "string", "minLength": 1, "maxLength": 64, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "email": { "type": "string", "format": "email", "maxLength": 160 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "role", "memberId", "email", "createdAt", "updatedAt"]
+    },
+    "PortalSettings": {
+      "title": "PortalSettings",
+      "description": "Institutional configuration parameters.",
+      "type": "object",
+      "properties": {
+        "attendanceThreshold": { "type": "integer" },
+        "instituteName": { "type": "string", "minLength": 2, "maxLength": 160 },
+        "seeded": { "type": "boolean" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["attendanceThreshold", "instituteName", "seeded", "updatedAt"]
+    },
+    "Teacher": {
+      "title": "Teacher",
+      "description": "Faculty profile and administrator-assigned module permissions.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 2, "maxLength": 64, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "instituteId": { "type": "string", "enum": ["IEM_PORTAL"] },
+        "name": { "type": "string", "minLength": 2, "maxLength": 120 },
+        "department": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "designation": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "subjects": { "type": "array" },
+        "permissions": { "type": "object" },
+        "createdAt": { "type": "string", "maxLength": 32 }
+      },
+      "required": ["id", "instituteId", "name", "department", "designation", "subjects", "permissions", "createdAt"]
+    },
+    "TeacherPrivate": {
+      "title": "TeacherPrivate",
+      "description": "Restricted PII and administrator-managed portal credentials for teachers.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 2, "maxLength": 64, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "email": { "type": "string", "maxLength": 160 },
+        "portalPassword": { "type": "string", "minLength": 4, "maxLength": 64 },
+        "isDefaultPassword": { "type": "boolean" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "email", "portalPassword", "isDefaultPassword", "updatedAt"]
+    },
+    "Student": {
+      "title": "Student",
+      "description": "Enrolled student academic profile without sensitive contact PII.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 4, "maxLength": 64, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "name": { "type": "string", "minLength": 2, "maxLength": 120 },
+        "course": { "type": "string", "minLength": 2, "maxLength": 120 },
+        "semester": { "type": "integer" },
+        "section": { "type": "string", "minLength": 1, "maxLength": 16 },
+        "rollNo": { "type": "string", "minLength": 1, "maxLength": 32 },
+        "photoUrl": { "type": "string", "maxLength": 250000 },
+        "projectTitle": { "type": "string", "maxLength": 200 },
+        "projectDetails": { "type": "string", "maxLength": 1000 },
+        "status": { "type": "string", "enum": ["active", "inactive"] },
+        "enrolledAt": { "type": "string", "maxLength": 32 },
+        "studentEmail": { "type": "string", "maxLength": 160 },
+        "teacherEmails": { "type": "array" }
+      },
+      "required": ["id", "name", "course", "semester", "section", "rollNo", "photoUrl", "projectTitle", "projectDetails", "status", "enrolledAt", "studentEmail", "teacherEmails"]
+    },
+    "StudentPrivate": {
+      "title": "StudentPrivate",
+      "description": "Restricted PII and administrator-managed portal credentials for students.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 4, "maxLength": 64, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "email": { "type": "string", "maxLength": 160 },
+        "phone": { "type": "string", "maxLength": 32 },
+        "portalPassword": { "type": "string", "minLength": 4, "maxLength": 64 },
+        "isDefaultPassword": { "type": "boolean" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "email", "phone", "portalPassword", "isDefaultPassword", "updatedAt"]
+    },
+    "Subject": {
+      "title": "Subject",
+      "description": "Registered academic subject.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 2, "maxLength": 64, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "instituteId": { "type": "string", "enum": ["IEM_PORTAL"] },
+        "code": { "type": "string", "minLength": 2, "maxLength": 24 },
+        "name": { "type": "string", "minLength": 2, "maxLength": 160 },
+        "course": { "type": "string", "minLength": 2, "maxLength": 120 },
+        "semester": { "type": "integer" },
+        "maxMarks": { "type": "integer" },
+        "passingMarks": { "type": "integer" },
+        "teacherId": { "type": "string", "minLength": 1, "maxLength": 64 }
+      },
+      "required": ["id", "instituteId", "code", "name", "course", "semester", "maxMarks", "passingMarks", "teacherId"]
+    },
+    "RoutineSlot": {
+      "title": "RoutineSlot",
+      "description": "Weekly timetable slot.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 2, "maxLength": 64, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "instituteId": { "type": "string", "enum": ["IEM_PORTAL"] },
+        "day": { "type": "string", "enum": ["Mon", "Tue", "Wed", "Thu", "Fri"] },
+        "period": { "type": "integer" },
+        "course": { "type": "string", "minLength": 2, "maxLength": 120 },
+        "semester": { "type": "integer" },
+        "section": { "type": "string", "minLength": 1, "maxLength": 16 },
+        "subjectCode": { "type": "string", "minLength": 1, "maxLength": 24 },
+        "subjectName": { "type": "string", "minLength": 1, "maxLength": 160 },
+        "teacherName": { "type": "string", "maxLength": 120 },
+        "room": { "type": "string", "maxLength": 40 }
+      },
+      "required": ["id", "instituteId", "day", "period", "course", "semester", "section", "subjectCode", "subjectName", "teacherName", "room"]
+    },
+    "AttendanceRecord": {
+      "title": "AttendanceRecord",
+      "description": "Subject-wise daily student attendance status.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 2, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "date": { "type": "string", "minLength": 8, "maxLength": 20 },
+        "subjectId": { "type": "string", "minLength": 2, "maxLength": 64, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "studentId": { "type": "string", "minLength": 4, "maxLength": 64, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "studentEmail": { "type": "string", "maxLength": 160 },
+        "teacherEmails": { "type": "array" },
+        "status": { "type": "string", "enum": ["Present", "Absent"] },
+        "markedBy": { "type": "string", "minLength": 1, "maxLength": 64 }
+      },
+      "required": ["id", "date", "subjectId", "studentId", "studentEmail", "teacherEmails", "status", "markedBy"]
+    },
+    "Assignment": {
+      "title": "Assignment",
+      "description": "Published online and offline course assignment.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 2, "maxLength": 64, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "instituteId": { "type": "string", "enum": ["IEM_PORTAL"] },
+        "title": { "type": "string", "minLength": 2, "maxLength": 200 },
+        "subjectId": { "type": "string", "minLength": 2, "maxLength": 64, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "subjectName": { "type": "string", "minLength": 1, "maxLength": 160 },
+        "course": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "semester": { "type": "integer" },
+        "instructions": { "type": "string", "maxLength": 2000 },
+        "onlineDeadline": { "type": "string", "maxLength": 32 },
+        "googleClassroomUrl": { "type": "string", "maxLength": 500 },
+        "offlineDeadline": { "type": "string", "maxLength": 32 },
+        "offlineInstructions": { "type": "string", "maxLength": 1000 },
+        "createdBy": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "createdAt": { "type": "string", "maxLength": 32 }
+      },
+      "required": ["id", "instituteId", "title", "subjectId", "subjectName", "course", "semester", "instructions", "onlineDeadline", "googleClassroomUrl", "offlineDeadline", "offlineInstructions", "createdBy", "createdAt"]
+    },
+    "MarkRecord": {
+      "title": "MarkRecord",
+      "description": "Subject-wise marks for an enrolled student.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 2, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "studentId": { "type": "string", "minLength": 4, "maxLength": 64, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "studentEmail": { "type": "string", "maxLength": 160 },
+        "teacherEmails": { "type": "array" },
+        "subjectId": { "type": "string", "minLength": 2, "maxLength": 64, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "obtainedMarks": { "type": "number" },
+        "updatedBy": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "updatedAt": { "type": "string", "maxLength": 32 }
+      },
+      "required": ["id", "studentId", "studentEmail", "teacherEmails", "subjectId", "obtainedMarks", "updatedBy", "updatedAt"]
+    },
+    "StudyMaterial": {
+      "title": "StudyMaterial",
+      "description": "Published PDF, notes, or slides link for a subject.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 2, "maxLength": 64, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "instituteId": { "type": "string", "enum": ["IEM_PORTAL"] },
+        "title": { "type": "string", "minLength": 2, "maxLength": 200 },
+        "course": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "semester": { "type": "integer" },
+        "subjectId": { "type": "string", "minLength": 2, "maxLength": 64, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "subjectName": { "type": "string", "minLength": 1, "maxLength": 160 },
+        "type": { "type": "string", "enum": ["PDF", "Notes", "Slides"] },
+        "resourceUrl": { "type": "string", "maxLength": 500 },
+        "description": { "type": "string", "maxLength": 1000 },
+        "uploadedBy": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "uploadedAt": { "type": "string", "maxLength": 32 }
+      },
+      "required": ["id", "instituteId", "title", "course", "semester", "subjectId", "subjectName", "type", "resourceUrl", "description", "uploadedBy", "uploadedAt"]
+    },
+    "CalendarEvent": {
+      "title": "CalendarEvent",
+      "description": "Academic calendar event or notice.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 2, "maxLength": 64, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "instituteId": { "type": "string", "enum": ["IEM_PORTAL"] },
+        "title": { "type": "string", "minLength": 2, "maxLength": 160 },
+        "date": { "type": "string", "minLength": 8, "maxLength": 20 },
+        "category": { "type": "string", "enum": ["Exam", "Holiday", "Academic", "Event"] },
+        "description": { "type": "string", "maxLength": 1000 }
+      },
+      "required": ["id", "instituteId", "title", "date", "category", "description"]
+    },
+    "StudentApplication": {
+      "title": "StudentApplication",
+      "description": "Student ID and password application queued exclusively for Administrator review.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 4, "maxLength": 64, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "applicantUid": { "type": "string", "minLength": 6, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "name": { "type": "string", "minLength": 2, "maxLength": 120 },
+        "course": { "type": "string", "minLength": 2, "maxLength": 120 },
+        "semester": { "type": "integer" },
+        "section": { "type": "string", "minLength": 1, "maxLength": 16 },
+        "rollNo": { "type": "string", "maxLength": 32 },
+        "email": { "type": "string", "format": "email", "maxLength": 160 },
+        "phone": { "type": "string", "minLength": 4, "maxLength": 32 },
+        "requestedPassword": { "type": "string", "minLength": 4, "maxLength": 64 },
+        "status": { "type": "string", "enum": ["Pending", "Approved", "Rejected"] },
+        "assignedStudentId": { "type": "string", "maxLength": 64 },
+        "submittedAt": { "type": "string", "maxLength": 32 },
+        "reviewedAt": { "type": "string", "maxLength": 32 },
+        "reviewedBy": { "type": "string", "maxLength": 64 },
+        "notes": { "type": "string", "maxLength": 500 }
+      },
+      "required": ["id", "applicantUid", "name", "course", "semester", "section", "rollNo", "email", "phone", "requestedPassword", "status", "submittedAt", "notes"]
+    }
+  },
+  "firestore": {
+    "/admins/{uid}": {
+      "schema": { "$ref": "#/entities/AdminUser" },
+      "description": "Administrator registry records."
+    },
+    "/users/{uid}": {
+      "schema": { "$ref": "#/entities/UserLink" },
+      "description": "Verified Firebase Auth UID to institutional role mapping."
+    },
+    "/settings/{settingId}": {
+      "schema": { "$ref": "#/entities/PortalSettings" },
+      "description": "Portal-wide institutional settings."
+    },
+    "/teachers/{teacherId}": {
+      "schema": { "$ref": "#/entities/Teacher" },
+      "description": "Faculty directory and permission authorizations."
+    },
+    "/teacherPrivate/{teacherId}": {
+      "schema": { "$ref": "#/entities/TeacherPrivate" },
+      "description": "Teacher private contact and admin-visible credential data."
+    },
+    "/students/{studentId}": {
+      "schema": { "$ref": "#/entities/Student" },
+      "description": "Student academic directory records."
+    },
+    "/studentPrivate/{studentId}": {
+      "schema": { "$ref": "#/entities/StudentPrivate" },
+      "description": "Student private contact PII and admin-visible credential data."
+    },
+    "/subjects/{subjectId}": {
+      "schema": { "$ref": "#/entities/Subject" },
+      "description": "Academic subject catalog."
+    },
+    "/routine/{slotId}": {
+      "schema": { "$ref": "#/entities/RoutineSlot" },
+      "description": "Weekly class timetable slots."
+    },
+    "/attendance/{attId}": {
+      "schema": { "$ref": "#/entities/AttendanceRecord" },
+      "description": "Daily subject-wise student attendance register."
+    },
+    "/assignments/{assignmentId}": {
+      "schema": { "$ref": "#/entities/Assignment" },
+      "description": "Published course assignments."
+    },
+    "/marks/{markId}": {
+      "schema": { "$ref": "#/entities/MarkRecord" },
+      "description": "Student subject marks."
+    },
+    "/materials/{materialId}": {
+      "schema": { "$ref": "#/entities/StudyMaterial" },
+      "description": "Course study materials (PDF, Notes, Slides)."
+    },
+    "/calendarEvents/{eventId}": {
+      "schema": { "$ref": "#/entities/CalendarEvent" },
+      "description": "Institutional academic calendar events."
+    },
+    "/studentApplications/{appId}": {
+      "schema": { "$ref": "#/entities/StudentApplication" },
+      "description": "Student ID & password requests reviewed by Administrator."
+    }
+  }
+}

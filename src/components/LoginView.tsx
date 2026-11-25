@@ -2,25 +2,24 @@ import React, { useEffect, useState } from 'react';
 import {
   ChevronDown,
   ChevronRight,
-  RefreshCw,
+  LogOut,
   ShieldCheck,
   UserPlus,
   X,
 } from 'lucide-react';
 import type { PortalBootstrapData, UserRole } from '../types/portal';
-import { loginRequest, submitStudentApplication } from '../api/client';
+import {
+  fetchMyApplications,
+  signInWithGoogle,
+  signOutPortal,
+  submitStudentApplication,
+  type UnlinkedGoogleAccount,
+} from '../api/client';
 
 interface LoginViewProps {
   onLoginSuccess: (data: PortalBootstrapData) => void;
-}
-
-function generateCaptchaCode(): string {
-  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-  let result = '';
-  for (let i = 0; i < 4; i += 1) {
-    result += chars[Math.floor(Math.random() * chars.length)];
-  }
-  return result;
+  unlinkedAccount?: UnlinkedGoogleAccount | null;
+  onUnlinkedAccount?: (account: UnlinkedGoogleAccount | null) => void;
 }
 
 function formatPortalClock(date: Date): string {
@@ -50,12 +49,12 @@ function PortalClock() {
   );
 }
 
-export function LoginView({ onLoginSuccess }: LoginViewProps) {
-  const [userId, setUserId] = useState('');
-  const [password, setPassword] = useState('');
+export function LoginView({
+  onLoginSuccess,
+  unlinkedAccount = null,
+  onUnlinkedAccount,
+}: LoginViewProps) {
   const [role, setRole] = useState<UserRole>('student');
-  const [captchaCode, setCaptchaCode] = useState(() => generateCaptchaCode());
-  const [captchaInput, setCaptchaInput] = useState('');
   const [error, setError] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [openSection, setOpenSection] = useState<string>('hierarchy');
@@ -75,33 +74,39 @@ export function LoginView({ onLoginSuccess }: LoginViewProps) {
   const [appSuccess, setAppSuccess] = useState('');
   const [appError, setAppError] = useState('');
 
-  async function handleSubmit(e: React.FormEvent) {
+  function openApplicationModal() {
+    setAppError('');
+    setAppSuccess('');
+    if (unlinkedAccount) {
+      if (!appName) setAppName(unlinkedAccount.displayName || '');
+      setAppEmail(unlinkedAccount.email);
+    }
+    setRequestModalOpen(true);
+  }
+
+  async function handleGoogleSignIn(e: React.FormEvent) {
     e.preventDefault();
     setError('');
-
-    if (!userId.trim() || !password.trim()) {
-      setError('Please enter your User ID and Password.');
-      return;
-    }
-
-    if (captchaInput.trim().toUpperCase() !== captchaCode) {
-      setError('Verification code does not match. Please try again.');
-      setCaptchaCode(generateCaptchaCode());
-      setCaptchaInput('');
-      return;
-    }
-
     setSubmitting(true);
     try {
-      const res = await loginRequest(userId.trim(), password, role);
-      onLoginSuccess(res.data);
+      const outcome = await signInWithGoogle(role);
+      if (outcome.status === 'authenticated') {
+        onUnlinkedAccount?.(null);
+        onLoginSuccess(outcome.data);
+      } else {
+        onUnlinkedAccount?.(outcome.account);
+      }
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Sign-in failed');
-      setCaptchaCode(generateCaptchaCode());
-      setCaptchaInput('');
+      setError(err instanceof Error ? err.message : 'Google Sign-In failed');
     } finally {
       setSubmitting(false);
     }
+  }
+
+  async function handleSwitchGoogleAccount() {
+    setError('');
+    await signOutPortal();
+    onUnlinkedAccount?.(null);
   }
 
   async function handleApplicationSubmit(e: React.FormEvent) {
@@ -124,9 +129,15 @@ export function LoginView({ onLoginSuccess }: LoginViewProps) {
       setAppSuccess(
         `Request submitted (Reference: ${res.applicationId}). Your request is routed strictly to the Administrator for ID & password issuance.`
       );
+      if (unlinkedAccount) {
+        const refreshedApps = await fetchMyApplications();
+        onUnlinkedAccount?.({
+          ...unlinkedAccount,
+          applications: refreshedApps,
+        });
+      }
       setAppName('');
       setAppRollNo('');
-      setAppEmail('');
       setAppPhone('');
       setAppPassword('');
       setAppNotes('');
@@ -189,76 +200,11 @@ export function LoginView({ onLoginSuccess }: LoginViewProps) {
       >
         <div className="max-w-[1440px] mx-auto px-4 sm:px-6 py-3">
           <form
-            onSubmit={handleSubmit}
+            onSubmit={handleGoogleSignIn}
             className="flex flex-wrap items-center justify-between gap-3"
           >
-            <div className="flex flex-wrap items-center gap-2.5">
-              <div className="flex items-center gap-1.5">
-                <label
-                  htmlFor="login-user-id"
-                  className="text-xs font-semibold text-[#14532d] whitespace-nowrap"
-                >
-                  User ID
-                </label>
-                <input
-                  id="login-user-id"
-                  type="text"
-                  value={userId}
-                  onChange={(e) => setUserId(e.target.value)}
-                  placeholder="Enter ID"
-                  autoComplete="username"
-                  className="h-9 w-40 sm:w-44 px-2.5 text-sm bg-white border border-[#9fd0ad] rounded focus:outline-none focus:ring-2 focus:ring-[#166534] font-mono"
-                />
-              </div>
-
-              <div className="flex items-center gap-1.5">
-                <label
-                  htmlFor="login-password"
-                  className="text-xs font-semibold text-[#14532d] whitespace-nowrap"
-                >
-                  Password
-                </label>
-                <input
-                  id="login-password"
-                  type="password"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  placeholder="••••••"
-                  autoComplete="current-password"
-                  className="h-9 w-32 sm:w-36 px-2.5 text-sm bg-white border border-[#9fd0ad] rounded focus:outline-none focus:ring-2 focus:ring-[#166534]"
-                />
-              </div>
-
-              {/* Verification Code */}
-              <div className="flex items-center gap-1.5">
-                <div
-                  className="h-9 px-3 rounded bg-gradient-to-r from-[#14532d] to-[#16a34a] text-white font-mono text-sm font-bold tracking-[0.22em] select-none flex items-center justify-center shadow-inner"
-                  aria-label={`Security code ${captchaCode}`}
-                  data-testid="captcha-display"
-                >
-                  {captchaCode}
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setCaptchaCode(generateCaptchaCode())}
-                  aria-label="Refresh verification code"
-                  className="h-9 w-9 flex items-center justify-center rounded bg-white border border-[#9fd0ad] text-[#14532d] hover:bg-[#edf9f0] transition-colors cursor-pointer"
-                >
-                  <RefreshCw className="w-3.5 h-3.5" />
-                </button>
-                <input
-                  id="login-captcha"
-                  type="text"
-                  aria-label="Enter verification code"
-                  value={captchaInput}
-                  onChange={(e) => setCaptchaInput(e.target.value)}
-                  placeholder="Code"
-                  maxLength={6}
-                  className="h-9 w-20 px-2 text-sm bg-white border border-[#9fd0ad] rounded uppercase font-mono focus:outline-none focus:ring-2 focus:ring-[#166534]"
-                />
-              </div>
-
-              <div className="flex items-center gap-1.5">
+            <div className="flex flex-wrap items-center gap-3">
+              <div className="flex items-center gap-2">
                 <label
                   htmlFor="login-role"
                   className="text-xs font-semibold text-[#14532d] whitespace-nowrap"
@@ -269,7 +215,7 @@ export function LoginView({ onLoginSuccess }: LoginViewProps) {
                   id="login-role"
                   value={role}
                   onChange={(e) => setRole(e.target.value as UserRole)}
-                  className="h-9 px-2.5 text-sm bg-white border border-[#9fd0ad] rounded font-medium text-[#0f291a] focus:outline-none focus:ring-2 focus:ring-[#166534]"
+                  className="h-9 px-3 text-sm bg-white border border-[#9fd0ad] rounded font-medium text-[#0f291a] focus:outline-none focus:ring-2 focus:ring-[#166534]"
                 >
                   <option value="student">Student</option>
                   <option value="teacher">Teacher</option>
@@ -280,18 +226,17 @@ export function LoginView({ onLoginSuccess }: LoginViewProps) {
               <button
                 type="submit"
                 disabled={submitting}
-                className="h-9 px-5 bg-[#166534] hover:bg-[#14532d] disabled:opacity-60 text-white text-sm font-semibold rounded transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+                className="h-9 px-4 bg-[#166534] hover:bg-[#14532d] disabled:opacity-60 text-white text-sm font-semibold rounded transition-colors inline-flex items-center gap-2 whitespace-nowrap shrink-0 cursor-pointer"
               >
-                {submitting ? 'Signing in...' : 'Go'}
+                <svg viewBox="0 0 24 24" className="w-4 h-4 fill-current shrink-0" aria-hidden="true">
+                  <path d="M21.35 11.1h-9.17v2.73h6.51c-.33 3.81-3.5 5.44-6.5 5.44C8.36 19.27 5 16.25 5 12c0-4.1 3.2-7.27 7.2-7.27 3.09 0 4.9 1.97 4.9 1.97L19 4.72S16.56 2 12.1 2C6.42 2 2.03 6.8 2.03 12c0 5.05 4.13 10 10.22 10 5.35 0 9.25-3.67 9.25-9.09 0-1.15-.15-1.81-.15-1.81Z" />
+                </svg>
+                <span>{submitting ? 'Signing in...' : 'Sign In with Google'}</span>
               </button>
 
               <button
                 type="button"
-                onClick={() => {
-                  setAppError('');
-                  setAppSuccess('');
-                  setRequestModalOpen(true);
-                }}
+                onClick={openApplicationModal}
                 className="h-9 px-3.5 bg-white hover:bg-[#eef8f0] border border-[#166534] text-[#14532d] text-xs font-semibold rounded inline-flex items-center gap-1.5 whitespace-nowrap cursor-pointer"
               >
                 <UserPlus className="w-3.5 h-3.5" />
@@ -308,6 +253,53 @@ export function LoginView({ onLoginSuccess }: LoginViewProps) {
               className="mt-2.5 px-3 py-2 rounded bg-red-50 border border-red-200 text-xs font-medium text-red-800"
             >
               {error}
+            </div>
+          )}
+
+          {unlinkedAccount && (
+            <div
+              role="status"
+              className="mt-3 p-4 rounded-md bg-white border border-[#9fd0ad] flex flex-col sm:flex-row sm:items-center justify-between gap-3"
+            >
+              <div className="space-y-1">
+                <div className="text-xs font-bold text-[#14532d]">
+                  Signed in as <span className="font-mono">{unlinkedAccount.email}</span> — Account Pending Institutional Linking
+                </div>
+                <p className="text-xs text-[#274e36]">
+                  Your verified Google account is not yet linked to an enrolled Student or Faculty record for the selected role. Submit an ID &amp; Password request below or contact the Administrator.
+                </p>
+                {unlinkedAccount.applications.length > 0 && (
+                  <div className="pt-1 space-y-1">
+                    {unlinkedAccount.applications.map((app) => (
+                      <div
+                        key={app.id}
+                        className="text-xs font-mono text-[#14532d] bg-[#eff9f1] border border-[#cde6d4] px-2.5 py-1 rounded inline-block mr-2"
+                      >
+                        Ref {app.id}: <strong>{app.status}</strong>
+                        {app.assignedStudentId ? ` · Issued ID: ${app.assignedStudentId}` : ''}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2 shrink-0">
+                <button
+                  type="button"
+                  onClick={openApplicationModal}
+                  className="h-8 px-3 bg-[#166534] hover:bg-[#14532d] text-white text-xs font-semibold rounded cursor-pointer whitespace-nowrap"
+                >
+                  Apply for ID &amp; Password
+                </button>
+                <button
+                  type="button"
+                  onClick={handleSwitchGoogleAccount}
+                  className="h-8 px-3 bg-white hover:bg-[#f4fbf6] border border-[#9fd0ad] text-[#14532d] text-xs font-semibold rounded inline-flex items-center gap-1.5 cursor-pointer whitespace-nowrap"
+                >
+                  <LogOut className="w-3.5 h-3.5" />
+                  <span>Switch Google Account</span>
+                </button>
+              </div>
             </div>
           )}
         </div>

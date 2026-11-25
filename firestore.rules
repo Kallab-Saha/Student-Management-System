@@ -1,0 +1,532 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Global safety net: default deny everything
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // -------------------------------------------------------------------------
+    // Global Helpers (Eight Pillars Compliant)
+    // -------------------------------------------------------------------------
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isVerifiedUser() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
+    function isOwner(uid) {
+      return isVerifiedUser() && request.auth.uid == uid;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    // Zero-DB-read admin email check (safe for allow list rules)
+    function isBootstrapAdmin() {
+      return isVerifiedUser() && request.auth.token.email == 'sahakamolendu@gmail.com';
+    }
+
+    // Full admin check for single-doc get / create / update / delete
+    function isAdmin() {
+      return isBootstrapAdmin() ||
+        (isVerifiedUser() && exists(/databases/$(database)/documents/admins/$(request.auth.uid)));
+    }
+
+    function isAuthorizedTeacher(permKey) {
+      return isVerifiedUser() &&
+        exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'teacher' &&
+        isValidId(get(/databases/$(database)/documents/users/$(request.auth.uid)).data.memberId) &&
+        exists(/databases/$(database)/documents/teachers/$(get(/databases/$(database)/documents/users/$(request.auth.uid)).data.memberId)) &&
+        get(/databases/$(database)/documents/teachers/$(get(/databases/$(database)/documents/users/$(request.auth.uid)).data.memberId)).data.permissions[permKey] == true;
+    }
+
+    function isStudentOwner(studentId) {
+      return isVerifiedUser() &&
+        exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'student' &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.memberId == studentId;
+    }
+
+    function isVerifiedEmailMatch(role, memberId) {
+      return (
+        (role == 'student' &&
+          exists(/databases/$(database)/documents/studentPrivate/$(memberId)) &&
+          get(/databases/$(database)/documents/studentPrivate/$(memberId)).data.email == request.auth.token.email) ||
+        (role == 'teacher' &&
+          exists(/databases/$(database)/documents/teacherPrivate/$(memberId)) &&
+          get(/databases/$(database)/documents/teacherPrivate/$(memberId)).data.email == request.auth.token.email) ||
+        (role == 'admin' && isBootstrapAdmin())
+      );
+    }
+
+    // -------------------------------------------------------------------------
+    // Entity Validation Helpers (No existing() or diff() allowed here)
+    // -------------------------------------------------------------------------
+    function isValidAdminUser(data) {
+      return data.keys().hasAll(['email', 'name', 'role', 'createdAt']) &&
+        data.keys().hasOnly(['email', 'name', 'role', 'createdAt']) &&
+        data.email is string && data.email.size() >= 3 && data.email.size() <= 160 &&
+        data.name is string && data.name.size() >= 1 && data.name.size() <= 120 &&
+        data.role == 'admin' &&
+        data.createdAt is timestamp;
+    }
+
+    function isValidUserLink(data) {
+      return data.keys().hasAll(['uid', 'role', 'memberId', 'email', 'createdAt', 'updatedAt']) &&
+        data.keys().hasOnly(['uid', 'role', 'memberId', 'email', 'createdAt', 'updatedAt']) &&
+        isValidId(data.uid) &&
+        data.role in ['admin', 'teacher', 'student'] &&
+        isValidId(data.memberId) &&
+        data.email is string && data.email.size() >= 3 && data.email.size() <= 160 &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidPortalSettings(data) {
+      return data.keys().hasAll(['attendanceThreshold', 'instituteName', 'seeded', 'updatedAt']) &&
+        data.keys().hasOnly(['attendanceThreshold', 'instituteName', 'seeded', 'updatedAt']) &&
+        data.attendanceThreshold is int && data.attendanceThreshold >= 0 && data.attendanceThreshold <= 100 &&
+        data.instituteName is string && data.instituteName.size() >= 2 && data.instituteName.size() <= 160 &&
+        data.seeded is bool &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidTeacherPermissions(perms) {
+      return perms is map &&
+        perms.keys().hasAll(['attendance', 'assignments', 'routine', 'marks', 'materials', 'library', 'students_view', 'calendar']) &&
+        perms.keys().hasOnly(['attendance', 'assignments', 'routine', 'marks', 'materials', 'library', 'students_view', 'calendar']) &&
+        perms.attendance is bool &&
+        perms.assignments is bool &&
+        perms.routine is bool &&
+        perms.marks is bool &&
+        perms.materials is bool &&
+        perms.library is bool &&
+        perms.students_view is bool &&
+        perms.calendar is bool;
+    }
+
+    function isValidTeacher(data) {
+      return data.keys().hasAll(['id', 'instituteId', 'name', 'department', 'designation', 'subjects', 'permissions', 'createdAt']) &&
+        data.keys().hasOnly(['id', 'instituteId', 'name', 'department', 'designation', 'subjects', 'permissions', 'createdAt']) &&
+        isValidId(data.id) &&
+        data.instituteId == 'IEM_PORTAL' &&
+        data.name is string && data.name.size() >= 2 && data.name.size() <= 120 &&
+        data.department is string && data.department.size() >= 1 && data.department.size() <= 120 &&
+        data.designation is string && data.designation.size() >= 1 && data.designation.size() <= 120 &&
+        data.subjects is list && data.subjects.size() <= 30 &&
+        (data.subjects.size() == 0 || data.subjects[0] is string) &&
+        isValidTeacherPermissions(data.permissions) &&
+        data.createdAt is string && data.createdAt.size() <= 32;
+    }
+
+    function isValidTeacherPrivate(data) {
+      return data.keys().hasAll(['id', 'email', 'portalPassword', 'isDefaultPassword', 'updatedAt']) &&
+        data.keys().hasOnly(['id', 'email', 'portalPassword', 'isDefaultPassword', 'updatedAt']) &&
+        isValidId(data.id) &&
+        data.email is string && data.email.size() <= 160 &&
+        data.portalPassword is string && data.portalPassword.size() >= 4 && data.portalPassword.size() <= 64 &&
+        data.isDefaultPassword is bool &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidStudent(data) {
+      return data.keys().hasAll(['id', 'name', 'course', 'semester', 'section', 'rollNo', 'photoUrl', 'projectTitle', 'projectDetails', 'status', 'enrolledAt', 'studentEmail', 'teacherEmails']) &&
+        data.keys().hasOnly(['id', 'name', 'course', 'semester', 'section', 'rollNo', 'photoUrl', 'projectTitle', 'projectDetails', 'status', 'enrolledAt', 'studentEmail', 'teacherEmails']) &&
+        isValidId(data.id) &&
+        data.name is string && data.name.size() >= 2 && data.name.size() <= 120 &&
+        data.course is string && data.course.size() >= 2 && data.course.size() <= 120 &&
+        data.semester is int && data.semester >= 1 && data.semester <= 10 &&
+        data.section is string && data.section.size() >= 1 && data.section.size() <= 16 &&
+        data.rollNo is string && data.rollNo.size() >= 1 && data.rollNo.size() <= 32 &&
+        data.photoUrl is string && data.photoUrl.size() <= 250000 &&
+        data.projectTitle is string && data.projectTitle.size() <= 200 &&
+        data.projectDetails is string && data.projectDetails.size() <= 1000 &&
+        data.status in ['active', 'inactive'] &&
+        data.enrolledAt is string && data.enrolledAt.size() <= 32 &&
+        data.studentEmail is string && data.studentEmail.size() <= 160 &&
+        data.teacherEmails is list && data.teacherEmails.size() <= 50 &&
+        (data.teacherEmails.size() == 0 || data.teacherEmails[0] is string);
+    }
+
+    function isValidStudentPrivate(data) {
+      return data.keys().hasAll(['id', 'email', 'phone', 'portalPassword', 'isDefaultPassword', 'updatedAt']) &&
+        data.keys().hasOnly(['id', 'email', 'phone', 'portalPassword', 'isDefaultPassword', 'updatedAt']) &&
+        isValidId(data.id) &&
+        data.email is string && data.email.size() <= 160 &&
+        data.phone is string && data.phone.size() <= 32 &&
+        data.portalPassword is string && data.portalPassword.size() >= 4 && data.portalPassword.size() <= 64 &&
+        data.isDefaultPassword is bool &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidSubject(data) {
+      return data.keys().hasAll(['id', 'instituteId', 'code', 'name', 'course', 'semester', 'maxMarks', 'passingMarks', 'teacherId']) &&
+        data.keys().hasOnly(['id', 'instituteId', 'code', 'name', 'course', 'semester', 'maxMarks', 'passingMarks', 'teacherId']) &&
+        isValidId(data.id) &&
+        data.instituteId == 'IEM_PORTAL' &&
+        data.code is string && data.code.size() >= 2 && data.code.size() <= 24 &&
+        data.name is string && data.name.size() >= 2 && data.name.size() <= 160 &&
+        data.course is string && data.course.size() >= 2 && data.course.size() <= 120 &&
+        data.semester is int && data.semester >= 1 && data.semester <= 10 &&
+        data.maxMarks is int && data.maxMarks >= 1 && data.maxMarks <= 1000 &&
+        data.passingMarks is int && data.passingMarks >= 0 && data.passingMarks <= data.maxMarks &&
+        data.teacherId is string && data.teacherId.size() >= 1 && data.teacherId.size() <= 64;
+    }
+
+    function isValidRoutineSlot(data) {
+      return data.keys().hasAll(['id', 'instituteId', 'day', 'period', 'course', 'semester', 'section', 'subjectCode', 'subjectName', 'teacherName', 'room']) &&
+        data.keys().hasOnly(['id', 'instituteId', 'day', 'period', 'course', 'semester', 'section', 'subjectCode', 'subjectName', 'teacherName', 'room']) &&
+        isValidId(data.id) &&
+        data.instituteId == 'IEM_PORTAL' &&
+        data.day in ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'] &&
+        data.period is int && data.period >= 1 && data.period <= 8 &&
+        data.course is string && data.course.size() >= 2 && data.course.size() <= 120 &&
+        data.semester is int && data.semester >= 1 && data.semester <= 10 &&
+        data.section is string && data.section.size() >= 1 && data.section.size() <= 16 &&
+        data.subjectCode is string && data.subjectCode.size() >= 1 && data.subjectCode.size() <= 24 &&
+        data.subjectName is string && data.subjectName.size() >= 1 && data.subjectName.size() <= 160 &&
+        data.teacherName is string && data.teacherName.size() <= 120 &&
+        data.room is string && data.room.size() <= 40;
+    }
+
+    function isValidAttendanceRecord(data) {
+      return data.keys().hasAll(['id', 'date', 'subjectId', 'studentId', 'studentEmail', 'teacherEmails', 'status', 'markedBy']) &&
+        data.keys().hasOnly(['id', 'date', 'subjectId', 'studentId', 'studentEmail', 'teacherEmails', 'status', 'markedBy']) &&
+        isValidId(data.id) &&
+        data.date is string && data.date.size() >= 8 && data.date.size() <= 20 &&
+        isValidId(data.subjectId) &&
+        isValidId(data.studentId) &&
+        data.studentEmail is string && data.studentEmail.size() <= 160 &&
+        data.teacherEmails is list && data.teacherEmails.size() <= 50 &&
+        (data.teacherEmails.size() == 0 || data.teacherEmails[0] is string) &&
+        data.status in ['Present', 'Absent'] &&
+        data.markedBy is string && data.markedBy.size() >= 1 && data.markedBy.size() <= 64;
+    }
+
+    function isValidAssignment(data) {
+      return data.keys().hasAll(['id', 'instituteId', 'title', 'subjectId', 'subjectName', 'course', 'semester', 'instructions', 'onlineDeadline', 'googleClassroomUrl', 'offlineDeadline', 'offlineInstructions', 'createdBy', 'createdAt']) &&
+        data.keys().hasOnly(['id', 'instituteId', 'title', 'subjectId', 'subjectName', 'course', 'semester', 'instructions', 'onlineDeadline', 'googleClassroomUrl', 'offlineDeadline', 'offlineInstructions', 'createdBy', 'createdAt']) &&
+        isValidId(data.id) &&
+        data.instituteId == 'IEM_PORTAL' &&
+        data.title is string && data.title.size() >= 2 && data.title.size() <= 200 &&
+        isValidId(data.subjectId) &&
+        data.subjectName is string && data.subjectName.size() >= 1 && data.subjectName.size() <= 160 &&
+        data.course is string && data.course.size() >= 1 && data.course.size() <= 120 &&
+        data.semester is int && data.semester >= 1 && data.semester <= 10 &&
+        data.instructions is string && data.instructions.size() <= 2000 &&
+        data.onlineDeadline is string && data.onlineDeadline.size() <= 32 &&
+        data.googleClassroomUrl is string && data.googleClassroomUrl.size() <= 500 &&
+        data.offlineDeadline is string && data.offlineDeadline.size() <= 32 &&
+        data.offlineInstructions is string && data.offlineInstructions.size() <= 1000 &&
+        data.createdBy is string && data.createdBy.size() >= 1 && data.createdBy.size() <= 64 &&
+        data.createdAt is string && data.createdAt.size() <= 32;
+    }
+
+    function isValidMarkRecord(data) {
+      return data.keys().hasAll(['id', 'studentId', 'studentEmail', 'teacherEmails', 'subjectId', 'obtainedMarks', 'updatedBy', 'updatedAt']) &&
+        data.keys().hasOnly(['id', 'studentId', 'studentEmail', 'teacherEmails', 'subjectId', 'obtainedMarks', 'updatedBy', 'updatedAt']) &&
+        isValidId(data.id) &&
+        isValidId(data.studentId) &&
+        data.studentEmail is string && data.studentEmail.size() <= 160 &&
+        data.teacherEmails is list && data.teacherEmails.size() <= 50 &&
+        (data.teacherEmails.size() == 0 || data.teacherEmails[0] is string) &&
+        isValidId(data.subjectId) &&
+        (data.obtainedMarks is int || data.obtainedMarks is float) &&
+        data.obtainedMarks >= 0 && data.obtainedMarks <= 1000 &&
+        data.updatedBy is string && data.updatedBy.size() >= 1 && data.updatedBy.size() <= 64 &&
+        data.updatedAt is string && data.updatedAt.size() <= 32;
+    }
+
+    function isValidStudyMaterial(data) {
+      return data.keys().hasAll(['id', 'instituteId', 'title', 'course', 'semester', 'subjectId', 'subjectName', 'type', 'resourceUrl', 'description', 'uploadedBy', 'uploadedAt']) &&
+        data.keys().hasOnly(['id', 'instituteId', 'title', 'course', 'semester', 'subjectId', 'subjectName', 'type', 'resourceUrl', 'description', 'uploadedBy', 'uploadedAt']) &&
+        isValidId(data.id) &&
+        data.instituteId == 'IEM_PORTAL' &&
+        data.title is string && data.title.size() >= 2 && data.title.size() <= 200 &&
+        data.course is string && data.course.size() >= 1 && data.course.size() <= 120 &&
+        data.semester is int && data.semester >= 1 && data.semester <= 10 &&
+        isValidId(data.subjectId) &&
+        data.subjectName is string && data.subjectName.size() >= 1 && data.subjectName.size() <= 160 &&
+        data.type in ['PDF', 'Notes', 'Slides'] &&
+        data.resourceUrl is string && data.resourceUrl.size() <= 500 &&
+        data.description is string && data.description.size() <= 1000 &&
+        data.uploadedBy is string && data.uploadedBy.size() >= 1 && data.uploadedBy.size() <= 64 &&
+        data.uploadedAt is string && data.uploadedAt.size() <= 32;
+    }
+
+    function isValidCalendarEvent(data) {
+      return data.keys().hasAll(['id', 'instituteId', 'title', 'date', 'category', 'description']) &&
+        data.keys().hasOnly(['id', 'instituteId', 'title', 'date', 'category', 'description']) &&
+        isValidId(data.id) &&
+        data.instituteId == 'IEM_PORTAL' &&
+        data.title is string && data.title.size() >= 2 && data.title.size() <= 160 &&
+        data.date is string && data.date.size() >= 8 && data.date.size() <= 20 &&
+        data.category in ['Exam', 'Holiday', 'Academic', 'Event'] &&
+        data.description is string && data.description.size() <= 1000;
+    }
+
+    function isValidStudentApplication(data) {
+      return data.keys().hasAll(['id', 'applicantUid', 'name', 'course', 'semester', 'section', 'rollNo', 'email', 'phone', 'requestedPassword', 'status', 'assignedStudentId', 'submittedAt', 'reviewedAt', 'reviewedBy', 'notes']) &&
+        data.keys().hasOnly(['id', 'applicantUid', 'name', 'course', 'semester', 'section', 'rollNo', 'email', 'phone', 'requestedPassword', 'status', 'assignedStudentId', 'submittedAt', 'reviewedAt', 'reviewedBy', 'notes']) &&
+        isValidId(data.id) &&
+        isValidId(data.applicantUid) &&
+        data.name is string && data.name.size() >= 2 && data.name.size() <= 120 &&
+        data.course is string && data.course.size() >= 2 && data.course.size() <= 120 &&
+        data.semester is int && data.semester >= 1 && data.semester <= 10 &&
+        data.section is string && data.section.size() >= 1 && data.section.size() <= 16 &&
+        data.rollNo is string && data.rollNo.size() <= 32 &&
+        data.email is string && data.email.size() >= 3 && data.email.size() <= 160 &&
+        data.phone is string && data.phone.size() >= 4 && data.phone.size() <= 32 &&
+        data.requestedPassword is string && data.requestedPassword.size() >= 4 && data.requestedPassword.size() <= 64 &&
+        data.status in ['Pending', 'Approved', 'Rejected'] &&
+        (data.assignedStudentId == null || (data.assignedStudentId is string && data.assignedStudentId.size() <= 64)) &&
+        data.submittedAt is string && data.submittedAt.size() <= 32 &&
+        (data.reviewedAt == null || (data.reviewedAt is string && data.reviewedAt.size() <= 32)) &&
+        (data.reviewedBy == null || (data.reviewedBy is string && data.reviewedBy.size() <= 64)) &&
+        data.notes is string && data.notes.size() <= 500;
+    }
+
+    // -------------------------------------------------------------------------
+    // Collection Rules
+    // -------------------------------------------------------------------------
+    match /admins/{uid} {
+      allow get: if isValidId(uid) && (isAdmin() || isOwner(uid));
+      allow list: if isBootstrapAdmin();
+      allow create: if isValidId(uid) && isValidAdminUser(incoming()) && isBootstrapAdmin() && incoming().createdAt == request.time;
+      allow update: if isValidId(uid) && isValidAdminUser(incoming()) && isAdmin() &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().diff(existing()).affectedKeys().hasOnly(['name', 'email']);
+      allow delete: if false;
+    }
+
+    match /users/{uid} {
+      allow get: if isValidId(uid) && (isAdmin() || isOwner(uid));
+      allow list: if isBootstrapAdmin();
+      allow create: if isValidId(uid) && isValidUserLink(incoming()) &&
+        incoming().uid == uid &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time &&
+        (isAdmin() || (isOwner(uid) && isVerifiedEmailMatch(incoming().role, incoming().memberId)));
+      allow update: if isValidId(uid) && isValidUserLink(incoming()) &&
+        incoming().uid == existing().uid &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time &&
+        (isAdmin() || (
+          isOwner(uid) &&
+          incoming().diff(existing()).affectedKeys().hasOnly(['role', 'memberId', 'email', 'updatedAt']) &&
+          isVerifiedEmailMatch(incoming().role, incoming().memberId)
+        ));
+      allow delete: if isValidId(uid) && isAdmin();
+    }
+
+    match /settings/{settingId} {
+      allow get: if isValidId(settingId) && isVerifiedUser();
+      allow list: if isBootstrapAdmin();
+      allow create: if isValidId(settingId) && isValidPortalSettings(incoming()) && isAdmin() && incoming().updatedAt == request.time;
+      allow update: if isValidId(settingId) && isValidPortalSettings(incoming()) && isAdmin() &&
+        incoming().updatedAt == request.time &&
+        incoming().diff(existing()).affectedKeys().hasOnly(['attendanceThreshold', 'instituteName', 'seeded', 'updatedAt']);
+      allow delete: if false;
+    }
+
+    match /teachers/{teacherId} {
+      allow get: if isValidId(teacherId) && isVerifiedUser();
+      allow list: if isVerifiedUser() && resource.data.instituteId == 'IEM_PORTAL';
+      allow create: if isValidId(teacherId) && isValidTeacher(incoming()) && isAdmin() && incoming().id == teacherId;
+      allow update: if isValidId(teacherId) && isValidTeacher(incoming()) && isAdmin() &&
+        incoming().id == existing().id &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().diff(existing()).affectedKeys().hasOnly(['name', 'department', 'designation', 'subjects', 'permissions']);
+      allow delete: if isValidId(teacherId) && isAdmin();
+    }
+
+    match /teacherPrivate/{teacherId} {
+      allow get: if isValidId(teacherId) && (isAdmin() || (isVerifiedUser() && existing().email == request.auth.token.email));
+      allow list: if isBootstrapAdmin() || (isVerifiedUser() && resource.data.email == request.auth.token.email);
+      allow create: if isValidId(teacherId) && isValidTeacherPrivate(incoming()) && isAdmin() && incoming().id == teacherId && incoming().updatedAt == request.time;
+      allow update: if isValidId(teacherId) && isValidTeacherPrivate(incoming()) && isAdmin() &&
+        incoming().id == existing().id &&
+        incoming().updatedAt == request.time &&
+        incoming().diff(existing()).affectedKeys().hasOnly(['email', 'portalPassword', 'isDefaultPassword', 'updatedAt']);
+      allow delete: if isValidId(teacherId) && isAdmin();
+    }
+
+    match /students/{studentId} {
+      allow get: if isValidId(studentId) && (
+        isAdmin() ||
+        isStudentOwner(studentId) ||
+        isAuthorizedTeacher('students_view') ||
+        isAuthorizedTeacher('attendance') ||
+        isAuthorizedTeacher('marks')
+      );
+      allow list: if isBootstrapAdmin() ||
+        (isVerifiedUser() && resource.data.studentEmail == request.auth.token.email) ||
+        (isVerifiedUser() && request.auth.token.email in resource.data.teacherEmails);
+      allow create: if isValidId(studentId) && isValidStudent(incoming()) && isAdmin() && incoming().id == studentId;
+      allow update: if isValidId(studentId) && isValidStudent(incoming()) && (
+        (isAdmin() &&
+          incoming().id == existing().id &&
+          incoming().enrolledAt == existing().enrolledAt &&
+          incoming().diff(existing()).affectedKeys().hasOnly(['name', 'course', 'semester', 'section', 'rollNo', 'photoUrl', 'projectTitle', 'projectDetails', 'status', 'studentEmail', 'teacherEmails'])) ||
+        (isStudentOwner(studentId) &&
+          incoming().id == existing().id &&
+          incoming().name == existing().name &&
+          incoming().course == existing().course &&
+          incoming().semester == existing().semester &&
+          incoming().section == existing().section &&
+          incoming().rollNo == existing().rollNo &&
+          incoming().status == existing().status &&
+          incoming().enrolledAt == existing().enrolledAt &&
+          incoming().studentEmail == existing().studentEmail &&
+          incoming().teacherEmails == existing().teacherEmails &&
+          incoming().diff(existing()).affectedKeys().hasOnly(['photoUrl', 'projectTitle', 'projectDetails']))
+      );
+      allow delete: if isValidId(studentId) && isAdmin();
+    }
+
+    match /studentPrivate/{studentId} {
+      allow get: if isValidId(studentId) && (isAdmin() || (isVerifiedUser() && existing().email == request.auth.token.email));
+      allow list: if isBootstrapAdmin() || (isVerifiedUser() && resource.data.email == request.auth.token.email);
+      allow create: if isValidId(studentId) && isValidStudentPrivate(incoming()) && isAdmin() && incoming().id == studentId && incoming().updatedAt == request.time;
+      allow update: if isValidId(studentId) && isValidStudentPrivate(incoming()) && incoming().updatedAt == request.time && (
+        (isAdmin() &&
+          incoming().id == existing().id &&
+          incoming().diff(existing()).affectedKeys().hasOnly(['email', 'phone', 'portalPassword', 'isDefaultPassword', 'updatedAt'])) ||
+        (isVerifiedUser() && existing().email == request.auth.token.email &&
+          incoming().id == existing().id &&
+          incoming().diff(existing()).affectedKeys().hasOnly(['email', 'phone', 'portalPassword', 'isDefaultPassword', 'updatedAt']))
+      );
+      allow delete: if isValidId(studentId) && isAdmin();
+    }
+
+    match /subjects/{subjectId} {
+      allow get: if isValidId(subjectId) && isVerifiedUser();
+      allow list: if isVerifiedUser() && resource.data.instituteId == 'IEM_PORTAL';
+      allow create: if isValidId(subjectId) && isValidSubject(incoming()) && isAdmin() && incoming().id == subjectId;
+      allow update: if isValidId(subjectId) && isValidSubject(incoming()) && isAdmin() &&
+        incoming().id == existing().id &&
+        incoming().diff(existing()).affectedKeys().hasOnly(['code', 'name', 'course', 'semester', 'maxMarks', 'passingMarks', 'teacherId']);
+      allow delete: if isValidId(subjectId) && isAdmin();
+    }
+
+    match /routine/{slotId} {
+      allow get: if isValidId(slotId) && isVerifiedUser();
+      allow list: if isVerifiedUser() && resource.data.instituteId == 'IEM_PORTAL';
+      allow create: if isValidId(slotId) && isValidRoutineSlot(incoming()) && incoming().id == slotId && (isAdmin() || isAuthorizedTeacher('routine'));
+      allow update: if isValidId(slotId) && isValidRoutineSlot(incoming()) &&
+        incoming().id == existing().id &&
+        incoming().diff(existing()).affectedKeys().hasOnly(['day', 'period', 'course', 'semester', 'section', 'subjectCode', 'subjectName', 'teacherName', 'room']) &&
+        (isAdmin() || isAuthorizedTeacher('routine'));
+      allow delete: if isValidId(slotId) && (isAdmin() || isAuthorizedTeacher('routine'));
+    }
+
+    match /attendance/{attId} {
+      allow get: if isValidId(attId) && (isAdmin() || isStudentOwner(existing().studentId) || isAuthorizedTeacher('attendance'));
+      allow list: if isBootstrapAdmin() ||
+        (isVerifiedUser() && resource.data.studentEmail == request.auth.token.email) ||
+        (isVerifiedUser() && request.auth.token.email in resource.data.teacherEmails);
+      allow create: if isValidId(attId) && isValidAttendanceRecord(incoming()) && incoming().id == attId &&
+        exists(/databases/$(database)/documents/students/$(incoming().studentId)) &&
+        exists(/databases/$(database)/documents/subjects/$(incoming().subjectId)) &&
+        (isAdmin() || isAuthorizedTeacher('attendance'));
+      allow update: if isValidId(attId) && isValidAttendanceRecord(incoming()) &&
+        incoming().id == existing().id &&
+        incoming().studentId == existing().studentId &&
+        incoming().subjectId == existing().subjectId &&
+        incoming().date == existing().date &&
+        incoming().diff(existing()).affectedKeys().hasOnly(['status', 'markedBy', 'studentEmail', 'teacherEmails']) &&
+        (isAdmin() || isAuthorizedTeacher('attendance'));
+      allow delete: if isValidId(attId) && isAdmin();
+    }
+
+    match /assignments/{assignmentId} {
+      allow get: if isValidId(assignmentId) && isVerifiedUser();
+      allow list: if isVerifiedUser() && resource.data.instituteId == 'IEM_PORTAL';
+      allow create: if isValidId(assignmentId) && isValidAssignment(incoming()) && incoming().id == assignmentId &&
+        exists(/databases/$(database)/documents/subjects/$(incoming().subjectId)) &&
+        (isAdmin() || isAuthorizedTeacher('assignments'));
+      allow update: if isValidId(assignmentId) && isValidAssignment(incoming()) &&
+        incoming().id == existing().id &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().diff(existing()).affectedKeys().hasOnly(['title', 'subjectId', 'subjectName', 'course', 'semester', 'instructions', 'onlineDeadline', 'googleClassroomUrl', 'offlineDeadline', 'offlineInstructions']) &&
+        (isAdmin() || isAuthorizedTeacher('assignments'));
+      allow delete: if isValidId(assignmentId) && (isAdmin() || isAuthorizedTeacher('assignments'));
+    }
+
+    match /marks/{markId} {
+      allow get: if isValidId(markId) && (isAdmin() || isStudentOwner(existing().studentId) || isAuthorizedTeacher('marks'));
+      allow list: if isBootstrapAdmin() ||
+        (isVerifiedUser() && resource.data.studentEmail == request.auth.token.email) ||
+        (isVerifiedUser() && request.auth.token.email in resource.data.teacherEmails);
+      allow create: if isValidId(markId) && isValidMarkRecord(incoming()) && incoming().id == markId &&
+        exists(/databases/$(database)/documents/students/$(incoming().studentId)) &&
+        exists(/databases/$(database)/documents/subjects/$(incoming().subjectId)) &&
+        (isAdmin() || isAuthorizedTeacher('marks'));
+      allow update: if isValidId(markId) && isValidMarkRecord(incoming()) &&
+        incoming().id == existing().id &&
+        incoming().studentId == existing().studentId &&
+        incoming().subjectId == existing().subjectId &&
+        incoming().diff(existing()).affectedKeys().hasOnly(['obtainedMarks', 'updatedBy', 'updatedAt', 'studentEmail', 'teacherEmails']) &&
+        (isAdmin() || isAuthorizedTeacher('marks'));
+      allow delete: if isValidId(markId) && isAdmin();
+    }
+
+    match /materials/{materialId} {
+      allow get: if isValidId(materialId) && isVerifiedUser();
+      allow list: if isVerifiedUser() && resource.data.instituteId == 'IEM_PORTAL';
+      allow create: if isValidId(materialId) && isValidStudyMaterial(incoming()) && incoming().id == materialId &&
+        exists(/databases/$(database)/documents/subjects/$(incoming().subjectId)) &&
+        (isAdmin() || isAuthorizedTeacher('materials'));
+      allow update: if isValidId(materialId) && isValidStudyMaterial(incoming()) &&
+        incoming().id == existing().id &&
+        incoming().diff(existing()).affectedKeys().hasOnly(['title', 'course', 'semester', 'subjectId', 'subjectName', 'type', 'resourceUrl', 'description']) &&
+        (isAdmin() || isAuthorizedTeacher('materials'));
+      allow delete: if isValidId(materialId) && (isAdmin() || isAuthorizedTeacher('materials'));
+    }
+
+    match /calendarEvents/{eventId} {
+      allow get: if isValidId(eventId) && isVerifiedUser();
+      allow list: if isVerifiedUser() && resource.data.instituteId == 'IEM_PORTAL';
+      allow create: if isValidId(eventId) && isValidCalendarEvent(incoming()) && incoming().id == eventId && (isAdmin() || isAuthorizedTeacher('calendar'));
+      allow update: if isValidId(eventId) && isValidCalendarEvent(incoming()) &&
+        incoming().id == existing().id &&
+        incoming().diff(existing()).affectedKeys().hasOnly(['title', 'date', 'category', 'description']) &&
+        (isAdmin() || isAuthorizedTeacher('calendar'));
+      allow delete: if isValidId(eventId) && (isAdmin() || isAuthorizedTeacher('calendar'));
+    }
+
+    match /studentApplications/{appId} {
+      allow get: if isValidId(appId) && (isAdmin() || (isVerifiedUser() && existing().applicantUid == request.auth.uid));
+      allow list: if isBootstrapAdmin() || (isVerifiedUser() && resource.data.applicantUid == request.auth.uid);
+      allow create: if isValidId(appId) && isValidStudentApplication(incoming()) &&
+        incoming().id == appId &&
+        incoming().status == 'Pending' &&
+        incoming().assignedStudentId == null &&
+        incoming().reviewedAt == null &&
+        incoming().reviewedBy == null &&
+        (isAdmin() || (isVerifiedUser() && incoming().applicantUid == request.auth.uid && incoming().email == request.auth.token.email));
+      allow update: if isValidId(appId) && isValidStudentApplication(incoming()) &&
+        isAdmin() &&
+        incoming().id == existing().id &&
+        incoming().applicantUid == existing().applicantUid &&
+        incoming().submittedAt == existing().submittedAt &&
+        (existing().status == 'Pending' || isAdmin()) &&
+        incoming().diff(existing()).affectedKeys().hasOnly(['status', 'assignedStudentId', 'reviewedAt', 'reviewedBy']);
+      allow delete: if isValidId(appId) && isAdmin();
+    }
+  }
+}
